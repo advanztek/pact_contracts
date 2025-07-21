@@ -1,0 +1,229 @@
+;; marmalade-ng.repl - Test file for NFT collection module with transfer
+
+;; Initialize environment
+(env-data {"disable-marmalade-v1": true})
+(load "kda-env/init.repl")
+
+;; Load marmalade-ng framework
+(begin-tx "Load marmalade-ng")
+(use marmalade-ng.ledger)
+(use marmalade-ng.std-policies)
+(use marmalade-ng.policy-collection)
+(use free.util-strings)
+(commit-tx)
+
+;; Setup test data and keysets
+(env-data {
+    "k": {
+        "keys": ["bob"],
+        "pred": "keys-any"
+    },
+    "creator": "bob",
+    "ks": {
+        "keys": ["collection-admin"],
+        "pred": "keys-any"
+    },
+    "ks-tmp": {
+        "keys": ["temp-key"],
+        "pred": "keys-any"
+    },
+    "ks-receiver": {
+        "keys": ["alice"],
+        "pred": "keys-any"
+    },
+    "ks-carol": {
+        "keys": ["carol"],
+        "pred": "keys-any"
+    }
+})
+
+;; Create test accounts
+(begin-tx "Setup test accounts")
+(env-sigs [
+    {"key": "bob", "caps": []},
+    {"key": "alice", "caps": []},
+    {"key": "carol", "caps": []}
+])
+
+;; Load your NFT module
+(begin-tx "Load NFT module")
+(namespace 'free)
+(load "marmalade-ng.pact")
+(commit-tx)
+
+;; Test 1: Initialize collection
+(begin-tx "Initialize collection")
+(env-sigs [
+    {"key": "bob", "caps": [(free.module-name.GOVERNANCE)]},
+    {"key": "collection-admin", "caps": []}
+])
+(env-data {
+    "ks": {
+        "keys": ["collection-admin"],
+        "pred": "keys-any"
+    }
+})
+
+(free.module-name.initialize-collection "My Test Collection" "bob" 0.05)
+(commit-tx)
+
+;; Test 2: Check collection info
+(begin-tx "Check collection info")
+(print "Collection Info:")
+(print (free.module-name.get-collection-info))
+(print "Collection Stats:")
+(print (free.module-name.get-collection-stats))
+(print "Is initialized:")
+(print (free.module-name.is-collection-initialized))
+(commit-tx)
+
+;; Test 3: Create and mint tokens to multiple receivers
+(begin-tx "Create and mint tokens to multiple receivers")
+(env-sigs [
+    {"key": "bob", "caps": [(free.module-name.GOVERNANCE)]},
+    {"key": "temp-key", "caps": []},
+    {"key": "alice", "caps": []},
+    {"key": "carol", "caps": []}
+])
+(env-data {
+    "ks-tmp": {
+        "keys": ["temp-key"],
+        "pred": "keys-any"
+    },
+    "marmalade_fixed_supply": {
+        "precision": 1,
+        "min_mint_amount": 1.0,
+        "max_supply": 1.0
+    },
+    "policies": [
+        "INSTANT-MINT",
+        "FIXED-ISSUANCE",
+        "DISABLE-BURN",
+        "FIXED-SALE"
+    ]
+})
+
+(let ((token-ids (free.module-name.create-and-mint-tokens 
+                    ["alice" "carol"] 
+                    ["https://example.com/token1.json" "https://example.com/token2.json"])))
+    (print "Created token IDs:")
+    (print token-ids)
+)
+
+(commit-tx)
+
+;; Test 4: Create and mint multiple tokens to single account
+(begin-tx "Create and mint multiple tokens to single account")
+(env-sigs [
+    {"key": "bob", "caps": [(free.module-name.GOVERNANCE)]},
+    {"key": "temp-key", "caps": []},
+    {"key": "alice", "caps": []}
+])
+
+(env-data {
+    "ks-tmp": {
+        "keys": ["temp-key"],
+        "pred": "keys-any"
+    },
+    "ks-receiver": {
+        "keys": ["alice"],
+        "pred": "keys-any"
+    },
+    "marmalade_fixed_supply": {
+        "precision": 1,
+        "min_mint_amount": 1.0,
+        "max_supply": 1.0
+    },
+    "policies": [
+        "INSTANT-MINT",
+        "FIXED-ISSUANCE",
+        "DISABLE-BURN",
+        "FIXED-SALE"
+    ]
+})
+
+(let ((token-ids (free.module-name.create-and-mint-to-single-account 
+                    "alice" 
+                    ["https://example.com/token3.json" "https://example.com/token4.json"])))
+    (print "Created token IDs for single account:")
+    (print token-ids)
+)
+(commit-tx)
+
+;; Test 5: Query functions before transfer
+(begin-tx "Query tokens and collection before transfer")
+(print "=== Collection Information ===")
+(print (free.module-name.get-collection-info))
+
+(print "=== All Tokens ===")
+(print (free.module-name.get-all-tokens))
+
+(print "=== Tokens owned by Alice ===")
+(print (free.module-name.get-tokens-by-owner "alice"))
+
+(print "=== Tokens owned by Carol ===")
+(print (free.module-name.get-tokens-by-owner "carol"))
+
+(print "=== Token Count ===")
+(print (free.module-name.get-token-count))
+(commit-tx)
+
+;; Test 6: Transfer token using collection module (Carol to Alice)
+(begin-tx "Transfer token using collection module")
+
+;; Set up signatures with the actual token-id
+(env-sigs [
+    {"key": "carol-key", "caps": [
+        (marmalade-ng.ledger.TRANSFER "t:4ZXGR4cMWCT7LGfetgqHTmxV2fSBkTnDzvWKY0MJHbo" "carol" "alice" 1.0)
+    ]}
+])
+
+;; Get Carol's first token for transfer and set up the transfer
+(let* ((carol-tokens (free.module-name.get-tokens-by-owner "carol"))
+       (first-token (at 0 carol-tokens))
+       (token-id (at 'id first-token)))
+    
+    (print (format "Transferring token {} from Carol to Alice" [token-id]))
+    
+    ;; Use the collection module's transfer function with Alice's guard
+    (marmalade-ng.ledger.transfer-create 
+        token-id 
+        "carol" 
+        "alice" 
+        (at 'guard (coin.details "alice")) 
+        1.0)
+    
+    (print "Transfer completed successfully")
+)
+(commit-tx)
+
+;; Test 7: Verify transfer results
+(begin-tx "Verify transfer results")
+(print "=== After Transfer ===")
+(print "Tokens owned by Alice:")
+(print (free.module-name.get-tokens-by-owner "alice"))
+
+(print "Tokens owned by Carol:")
+(print (free.module-name.get-tokens-by-owner "carol"))
+(commit-tx)
+
+;; Test 8: Try to initialize collection again (should fail)
+(begin-tx "Try to re-initialize collection")
+(env-sigs [
+    {"key": "bob", "caps": [(free.module-name.GOVERNANCE)]},
+    {"key": "collection-admin", "caps": []}
+])
+(env-data {
+    "ks": {
+        "keys": ["collection-admin"],
+        "pred": "keys-any"
+    }
+})
+
+(expect-failure 
+    "Should fail - collection already initialized"
+    (free.module-name.initialize-collection "Another Collection" "bob" 0.1)
+)
+(commit-tx)
+
+(print "=== All tests completed successfully! ===")
