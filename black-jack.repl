@@ -1,5 +1,5 @@
-;; Blackjack Contract REPL File
-;; This file provides test scenarios and example usage for the blackjack module
+;; Blackjack Contract REPL File - VERSION
+;; This file provides test scenarios and example usage for the improved blackjack module
 
 ;; Load required modules
 (load "kda-env/init.repl")
@@ -9,62 +9,39 @@
     "ks": {
         "keys": ["admin-key"],
         "pred": "keys-any"
+    },
+    "wr-ks": {
+        "keys": ["win-recorder-key"],
+        "pred": "keys-any"
     }
 })
 
-;; Set admin signature to ensure keyset authentication works
-(env-sigs [{"key": "admin-key", "caps": []}])
+;; Set admin signatures to ensure keyset authentication works
+(env-sigs [
+    {"key": "admin-key", "caps": []},
+    {"key": "win-recorder-key", "caps": []}
+])
 
 (begin-tx "Load module")
 (namespace 'free)
 (define-keyset "free.blackjack-admin-keyset" (read-keyset "ks"))
+(define-keyset "free.blackjack-win-recorder-keyset" (read-keyset "wr-ks"))
 (load "black-jack.pact")
 
 (commit-tx)
 
 ;; =============================================================================
-;; Test Setup
+;; Fund accounts and bank
 ;; =============================================================================
 
-(begin-tx "Setup test accounts and initialize balances")
-
-;; Create test accounts with initial balances (1000.0 each)
-(env-data {
-    "alice-guard": {
-        "keys": ["alice-key"],
-        "pred": "keys-any"
-    },
-    "bob-guard": {
-        "keys": ["bob-key"], 
-        "pred": "keys-any"
-    },
-    "dave-guard": {
-        "keys": ["dave-key"],
-        "pred": "keys-any"
-    }
-})
-
-;; Set up signatures for account creation
+(begin-tx "Fund accounts and bank")
 (env-sigs [
-    {"key": "alice-key", "caps": []},
-    {"key": "bob-key", "caps": []},
-    {"key": "dave-key", "caps": []}
-])
-
-;; Store account guards for our test accounts
-(env-sigs [
-    {"key": "alice-key", "caps": []},
-    {"key": "bob-key", "caps": []},
-    {"key": "dave-key", "caps": []},
     {"key": "carol-key", "caps": []}
 ])
-(free.blackjack.store-account-guard "alice")
-(free.blackjack.store-account-guard "bob")
-(free.blackjack.store-account-guard "dave")
 
 ;; Fund the BJ BANK account 
-(env-sigs [{"key": "carol-key", "caps": [(coin.TRANSFER "carol" (free.blackjack.get-BJ_BANK-account) 100.0)]}])
-(coin.transfer "carol" (free.blackjack.get-BJ_BANK-account) 100.0)
+(env-sigs [{"key": "carol-key", "caps": [(coin.TRANSFER "carol" (free.blackjack.get-BJ_BANK-account) 500.0)]}])
+(coin.transfer "carol" (free.blackjack.get-BJ_BANK-account) 500.0)
 
 (commit-tx)
 
@@ -78,22 +55,30 @@
 (env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE)]}])
 
 ;; Check initial fees
-(expect "PVC fee should be 1.0" 1.0 (free.blackjack.get-fee "pvc"))
-(expect "PVP fee should be 2.0" 2.0 (free.blackjack.get-fee "pvp"))
-(expect "Tournament fee should be 3.0" 3.0 (free.blackjack.get-fee "tournament"))
+(expect "PVC fee should be 1.0" 1.0 (free.blackjack.get-pvc-fee))
+(expect "PVP fee should be 2.0" 2.0 (free.blackjack.get-pvp-fee))
+(expect "Tournament fee should be 3.0" 3.0 (free.blackjack.get-tournament-fee))
 
 ;; Test admin fee setting
-(free.blackjack.set-game-fee "pvc" 1.5)
-(expect "Updated PVC fee should be 1.5" 1.5 (free.blackjack.get-fee "pvc"))
+(free.blackjack.set-pvc-fee 1.5)
+(expect "Updated PVC fee should be 1.5" 1.5 (free.blackjack.get-pvc-fee))
 
-;; Test game modes
-(expect "Should return all game modes" 
-  ["pvc" "pvp" "tournament"] 
-  (free.blackjack.get-game-modes))
+;; Test fee validation
+(expect-failure "Should fail with negative fee"
+  (free.blackjack.set-pvp-fee -1.0))
+
+(expect-failure "Should fail with zero fee"
+  (free.blackjack.set-tournament-fee 0.0))
+
+;; Test get all fees
+(let ((all-fees (free.blackjack.get-all-fees)))
+  (expect "PVC fee in all-fees should be 1.5" 1.5 (at "pvc" all-fees))
+  (expect "PVP fee in all-fees should be 2.0" 2.0 (at "pvp" all-fees))
+  (expect "Tournament fee in all-fees should be 3.0" 3.0 (at "tournament" all-fees)))
 
 ;; Check bank account balance
-(expect "Bank should be funded with 100.0" 
-  100.0 (coin.get-balance (free.blackjack.get-BJ_BANK-account)))
+(expect "Bank should be funded with 500.0" 
+  500.0 (coin.get-balance (free.blackjack.get-BJ_BANK-account)))
 
 (commit-tx)
 
@@ -115,22 +100,56 @@
 ;; Set admin signature for tournament creation
 (env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE)]}])
 
-;; Create a test tournament
+;; Test tournament validation
+(expect-failure "Should fail with empty tournament ID"
+  (free.blackjack.create-tournament 
+    ""
+    50.0
+    10
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")))
+
+(expect-failure "Should fail with negative pool"
+  (free.blackjack.create-tournament 
+    "test-tournament-bad"
+    -50.0
+    10
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")))
+
+(expect-failure "Should fail with negative max players"
+  (free.blackjack.create-tournament 
+    "test-tournament-bad"
+    50.0
+    -10
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")))
+
+(expect-failure "Should fail with signup end before signup start"
+  (free.blackjack.create-tournament 
+    "test-tournament-bad"
+    50.0
+    10
+    (time "2028-12-31T23:59:59Z")
+    (time "2024-01-01T00:00:00Z")
+    (time "2024-01-01T00:00:00Z")
+    (time "2028-12-31T23:59:59Z")))
+
+;; Create a valid test tournament
 (free.blackjack.create-tournament 
   "test-tournament-1"
   50.0
   10
   (time "2024-01-01T00:00:00Z")  ;; signup start
-  (time "2028-12-31T23:59:59Z")  ;; signup end
-  (time "2024-01-01T00:00:00Z")  ;; tournament start
+  (time "2027-12-31T23:59:59Z")  ;; signup end
+  (time "2028-01-01T00:00:00Z")  ;; tournament start
   (time "2028-12-31T23:59:59Z")  ;; tournament end
-)
-
-;; Debug: Check times
-(print (format "Current time: {}" [(free.blackjack.curr-time)]))
-(let ((tournament (free.blackjack.get-tournament "test-tournament-1")))
-  (print (format "Signup start: {}" [(at "startSignup" tournament)]))
-  (print (format "Signup end: {}" [(at "endSignup" tournament)]))
 )
 
 ;; Check tournament details
@@ -140,9 +159,31 @@
   (expect "Max players should be 10" 10 (at "maxPlayers" tournament))
   (expect "Initial players list should be empty" [] (at "players" tournament)))
 
-;; Test tournament registration
-(env-sigs [{"key": "alice-key", "caps": [(free.blackjack.ACCOUNT_GUARD "alice"), (coin.TRANSFER "alice" (free.blackjack.get-BJ_BANK-account) 3.0)]}])
-(free.blackjack.register-for-tournament "test-tournament-1" "alice")
+(commit-tx)
+
+;; =============================================================================
+;; Test Tournament Registration
+;; =============================================================================
+
+(begin-tx "Test tournament registration")
+
+;; Set alice's data and signatures for tournament registration
+(env-data {
+    "alice-guard": {
+        "keys": ["alice-key"],
+        "pred": "keys-any"
+    }
+})
+
+(env-sigs [
+    {"key": "alice-key", "caps": [
+        (coin.TRANSFER "alice" (free.blackjack.get-BJ_BANK-account) 3.0),
+        (free.blackjack.ACCOUNT_GUARD "alice")
+    ]}
+])
+
+;; Register alice for tournament
+(free.blackjack.register-for-tournament "test-tournament-1" "alice" (read-keyset "alice-guard"))
 
 ;; Check alice was added to tournament
 (let ((tournament (free.blackjack.get-tournament "test-tournament-1")))
@@ -155,83 +196,248 @@
 (commit-tx)
 
 ;; =============================================================================
-;; Test Game Joining
+;; Test PVC Games
 ;; =============================================================================
 
-(begin-tx "Test joining games")
+(begin-tx "Test PVC games")
 
-;; Test PVC game
-(env-sigs [{"key": "alice-key", "caps": [(free.blackjack.ACCOUNT_GUARD "alice"), (coin.TRANSFER "alice" (free.blackjack.get-BJ_BANK-account) 1.5)]}])
-(free.blackjack.join-game "alice" "pvc" "none")
+;; Set alice's data and signatures for PVC game
+(env-data {
+    "alice-guard": {
+        "keys": ["alice-key"],
+        "pred": "keys-any"
+    }
+})
 
-;; Check alice's stats updated
-(let ((stats (free.blackjack.get-player-stats "alice")))
-  (expect "Alice should have 1 game played" 1 (at "games-played" stats))
-  (expect "Alice should have 0 wins" 0 (at "wins" stats)))
+(env-sigs [
+    {"key": "alice-key", "caps": [
+        (coin.TRANSFER "alice" (free.blackjack.get-BJ_BANK-account) 1.5),
+        (free.blackjack.ACCOUNT_GUARD "alice")
+    ]}
+])
 
-;; Check alice's balance decreased by PVC fee
-(expect "Alice's balance should decrease by PVC fee" 
-  995.5 (coin.get-balance "alice"))
+(let ((game-id (free.blackjack.join-pvc-game "alice" (read-keyset "alice-guard"))))
+  (print (format "Alice joined PVC game with ID: {}" [game-id]))
+  
+  ;; Check alice's stats updated
+  (let ((stats (free.blackjack.get-player-stats "alice")))
+    (expect "Alice should have 1 game played" 1 (at "games-played" stats))
+    (expect "Alice should have 0 wins" 0 (at "wins" stats)))
 
-;; Test PVP game
-(env-sigs [{"key": "bob-key", "caps": [(free.blackjack.ACCOUNT_GUARD "bob"), (coin.TRANSFER "bob" (free.blackjack.get-BJ_BANK-account) 2.0)]}])
-(free.blackjack.join-game "bob" "pvp" "")
+  ;; Check alice's balance decreased by PVC fee
+  (expect "Alice's balance should decrease by PVC fee" 
+    995.5 (coin.get-balance "alice"))
 
-;; Check bob's balance decreased by PVP fee
-(expect "Bob's balance should decrease by PVP fee" 
-  998.0 (coin.get-balance "bob"))
+  ;; Check game session was created
+  (let ((game-session (free.blackjack.get-game-session game-id)))
+    (expect "Game type should be pvc" "pvc" (at "game-type" game-session))
+    (expect "Game should be active" "active" (at "status" game-session))
+    (expect "Alice should be in players list" ["alice"] (at "players" game-session))))
+
+(commit-tx)
+
+;; Record PVC win in separate transaction with proper signatures
+(begin-tx "Record PVC win")
+
+;; Set signatures with win-recorder-key having all necessary capabilities
+(env-sigs [
+    {"key": "win-recorder-key", "caps": [
+        (free.blackjack.WIN_RECORDER),
+        (free.blackjack.BANK_TRANSFER),
+        (coin.TRANSFER (free.blackjack.get-BJ_BANK-account) "alice" 1.05)
+    ]}
+])
+
+;; Get the game ID from alice's games
+(let ((alice-games (free.blackjack.get-player-games "alice")))
+  (let ((pvc-game (at 0 (filter (lambda (game) (= (at "game-type" game) "pvc")) alice-games))))
+    (let ((game-id (at "game-id" pvc-game)))
+      (free.blackjack.record-pvc-win game-id "alice")
+      
+      ;; Check alice's stats updated and received PVC payout (70% of 1.5 = 1.05)
+      (let ((stats (free.blackjack.get-player-stats "alice")))
+        (expect "Alice should have 1 win" 1 (at "wins" stats)))
+
+      (expect "Alice should receive PVC payout" 
+        996.55 (coin.get-balance "alice"))
+
+      ;; Check game session was completed
+      (let ((game-session (free.blackjack.get-game-session game-id)))
+        (expect "Game should be completed" "completed" (at "status" game-session))
+        (expect "Alice should be the winner" "alice" (at "winner" game-session))))))
 
 (commit-tx)
 
 ;; =============================================================================
-;; Test Recording Wins
+;; Test PVP Games
 ;; =============================================================================
 
-(begin-tx "Test recording wins and payouts")
+(begin-tx "Test PVP games - bob creates game")
 
-;; Set admin signature for recording wins
-(env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE), (free.blackjack.BANK_TRANSFER)]}])
+;; Set bob's data and signatures for PVP game creation
+(env-data {
+    "bob-guard": {
+        "keys": ["bob-key"],
+        "pred": "keys-any"
+    }
+})
 
-;; Record a PVP win for bob
-(free.blackjack.record-win "bob" "pvp" "")
+(env-sigs [
+    {"key": "bob-key", "caps": [
+        (coin.TRANSFER "bob" (free.blackjack.get-BJ_BANK-account) 2.0),
+        (free.blackjack.ACCOUNT_GUARD "bob")
+    ]}
+])
 
-;; Check bob's stats updated
-(let ((stats (free.blackjack.get-player-stats "bob")))
-  (expect "Bob should have 1 win" 1 (at "wins" stats)))
+(let ((game-id (free.blackjack.join-pvp-game "bob" (read-keyset "bob-guard"))))
+  (print (format "Bob created PVP game with ID: {}" [game-id]))
+  
+  ;; Check bob's balance decreased by PVP fee
+  (expect "Bob's balance should decrease by PVP fee" 
+    998.0 (coin.get-balance "bob"))
 
-;; Check bob received PVP payout (60% of 2 * 2.0 = 2.4)
-(expect "Bob should receive PVP payout" 
-  1000.4 (coin.get-balance "bob"))
+  ;; Store game-id for next transaction
+  (env-data {"pvp-game-id": game-id}))
 
-;; Test tournament win
-(env-sigs [{"key": "alice-key", "caps": [(free.blackjack.ACCOUNT_GUARD "alice"), (coin.TRANSFER "alice" (free.blackjack.get-BJ_BANK-account) 3.0)]}])
-(free.blackjack.join-game "alice" "tournament" "test-tournament-1")
+(commit-tx)
 
-;; Record tournament win for alice
-(env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE), (free.blackjack.BANK_TRANSFER)]}])
-(free.blackjack.record-win "alice" "tournament" "test-tournament-1")
+(begin-tx "Add dave to PVP game")
 
-;; Check alice received tournament payout (70% of 50.0 = 35.0)
-(expect "Alice should receive tournament payout" 
-  1030.5 (coin.get-balance "alice"))
+;; Set dave's data and signatures for joining PVP game
+(env-data {
+    "dave-guard": {
+        "keys": ["dave-key"],
+        "pred": "keys-any"
+    },
+    "pvp-game-id": "pvc-alice-2027-06-15T12:00:00Z"
+})
+
+(env-sigs [
+    {"key": "dave-key", "caps": [
+        (coin.TRANSFER "dave" (free.blackjack.get-BJ_BANK-account) 2.0),
+        (free.blackjack.ACCOUNT_GUARD "dave")
+    ]}
+])
+
+;; Get the PVP game ID from bob's games since we can't pass it between transactions
+(let ((bob-games (free.blackjack.get-player-games "bob")))
+  (let ((pvp-game (at 0 (filter (lambda (game) (= (at "game-type" game) "pvp")) bob-games))))
+    (let ((game-id (at "game-id" pvp-game)))
+      
+      ;; Add dave as second player
+      (free.blackjack.add-player-to-pvp-game game-id "dave" (read-keyset "dave-guard"))
+
+      ;; Check dave's balance decreased by PVP fee
+      (expect "Dave's balance should decrease by PVP fee" 
+        998.0 (coin.get-balance "dave"))
+
+      ;; Check game session has both players
+      (let ((game-session (free.blackjack.get-game-session game-id)))
+        (expect "Game should have both players" ["bob" "dave"] (at "players" game-session))))))
+
+(commit-tx)
+
+;; Record PVP win in separate transaction
+(begin-tx "Record PVP win")
+
+;; Set signatures with win-recorder-key having all necessary capabilities
+(env-sigs [
+    {"key": "win-recorder-key", "caps": [
+        (free.blackjack.WIN_RECORDER),
+        (free.blackjack.BANK_TRANSFER),
+        (coin.TRANSFER (free.blackjack.get-BJ_BANK-account) "bob" 2.4)
+    ]}
+])
+
+;; Get the PVP game ID from bob's games
+(let ((bob-games (free.blackjack.get-player-games "bob")))
+  (let ((pvp-game (at 0 (filter (lambda (game) (= (at "game-type" game) "pvp")) bob-games))))
+    (let ((game-id (at "game-id" pvp-game)))
+      (free.blackjack.record-pvp-win game-id "bob")
+
+      ;; Check bob's stats updated
+      (let ((stats (free.blackjack.get-player-stats "bob")))
+        (expect "Bob should have 1 win" 1 (at "wins" stats))
+        (expect "Bob should have 1 game played" 1 (at "games-played" stats)))
+
+      ;; Check bob received PVP payout (60% of 4.0 = 2.4)
+      (expect "Bob should receive PVP payout" 
+        1000.4 (coin.get-balance "bob"))
+
+      ;; Check game session was completed
+      (let ((game-session (free.blackjack.get-game-session game-id)))
+        (expect "Game should be completed" "completed" (at "status" game-session))
+        (expect "Bob should be the winner" "bob" (at "winner" game-session))))))
 
 (commit-tx)
 
 ;; =============================================================================
-;; Test Leaderboard
+;; Test Tournament Games
 ;; =============================================================================
 
-(begin-tx "Test leaderboard functionality")
+(begin-tx "Test tournament games")
 
-;; Add more wins for testing leaderboard
-(env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE), (free.blackjack.BANK_TRANSFER)]}])
-(free.blackjack.record-win "alice" "pvc" "none")
-(free.blackjack.record-win "alice" "pvc" "none")
+;; Set alice's data and signatures for tournament game
+(env-data {
+    "alice-guard": {
+        "keys": ["alice-key"],
+        "pred": "keys-any"
+    }
+})
 
-;; Check leaderboard
-(let ((leaderboard (free.blackjack.get-leaderboard)))
-  (expect "Leaderboard should not be empty" true (> (length leaderboard) 0))
-  (print (format "Leaderboard: {}" [leaderboard])))
+(env-sigs [
+    {"key": "alice-key", "caps": [
+        (free.blackjack.ACCOUNT_GUARD "alice")
+    ]}
+])
+
+(env-chain-data {
+  "block-time": (time "2028-06-15T12:00:00Z"),
+  "block-height": 100,
+  "gas-limit": 100000,
+  "gas-price": 0.0000001,
+  "sender": "test-sender"
+})
+
+(print (free.blackjack.curr-time))
+
+(let ((game-id (free.blackjack.join-tournament-game "alice" "test-tournament-1")))
+  (print (format "Alice joined tournament game with ID: {}" [game-id]))
+  
+  ;; Check game session was created
+  (let ((game-session (free.blackjack.get-game-session game-id)))
+    (expect "Game type should be tournament" "tournament" (at "game-type" game-session))
+    (expect "Game should be active" "active" (at "status" game-session))
+    (expect "Tournament ID should match" "test-tournament-1" (at "tournament-id" game-session))))
+
+(commit-tx)
+
+;; Record tournament win in separate transaction
+(begin-tx "Record tournament win")
+
+;; Set signatures with win-recorder-key having all necessary capabilities
+(env-sigs [
+    {"key": "win-recorder-key", "caps": [
+        (free.blackjack.WIN_RECORDER),
+        (free.blackjack.BANK_TRANSFER),
+        (coin.TRANSFER (free.blackjack.get-BJ_BANK-account) "alice" 35.0)
+    ]}
+])
+
+;; Get the tournament game ID from alice's games
+(let ((alice-games (free.blackjack.get-player-games "alice")))
+  (let ((tournament-game (at 0 (filter (lambda (game) (= (at "game-type" game) "tournament")) alice-games))))
+    (let ((game-id (at "game-id" tournament-game)))
+      (free.blackjack.record-tournament-win game-id "alice")
+
+      ;; Check alice received tournament payout (70% of 50.0 = 35.0)  
+      (expect "Alice should receive tournament payout" 
+        1031.55 (coin.get-balance "alice"))
+
+      ;; Check game session was completed
+      (let ((game-session (free.blackjack.get-game-session game-id)))
+        (expect "Game should be completed" "completed" (at "status" game-session))
+        (expect "Alice should be the winner" "alice" (at "winner" game-session))))))
 
 (commit-tx)
 
@@ -241,53 +447,79 @@
 
 (begin-tx "Test error conditions")
 
-;; Test invalid game mode
-(env-sigs [{"key": "alice-key", "caps": [(free.blackjack.ACCOUNT_GUARD "alice")]}])
-(expect-failure "Should fail with invalid game mode"
-  (free.blackjack.join-game "alice" "invalid-mode" ""))
-
 ;; Test unauthorized admin action (should fail without admin keyset)
 (env-sigs [{"key": "alice-key", "caps": []}])
 (expect-failure "Should fail without admin capability"
-  (free.blackjack.set-game-fee "pvc" 10.0))
+  (free.blackjack.set-pvc-fee 10.0))
+
+;; Test unauthorized win recording (should fail without win recorder keyset)
+(env-sigs [{"key": "alice-key", "caps": []}])
+(expect-failure "Should fail without win recorder capability"
+  (free.blackjack.record-pvc-win "fake-game-id" "alice"))
 
 ;; Test joining tournament without registration
-(env-sigs [{"key": "dave-key", "caps": [(free.blackjack.ACCOUNT_GUARD "dave")]}])
+(env-sigs [
+    {"key": "dave-key", "caps": [
+        (free.blackjack.ACCOUNT_GUARD "dave")
+    ]}
+])
 (expect-failure "Should fail joining unregistered tournament"
-  (free.blackjack.join-game "dave" "tournament" "test-tournament-1"))
+  (free.blackjack.join-tournament-game "dave" "test-tournament-1"))
+
+;; Test recording win for non-existent game
+(env-sigs [{"key": "win-recorder-key", "caps": [(free.blackjack.WIN_RECORDER)]}])
+(expect-failure "Should fail recording win for non-existent game"
+  (free.blackjack.record-pvc-win "non-existent-game" "alice"))
 
 (commit-tx)
 
 ;; =============================================================================
-;; Utility Functions for Testing
+;; Test Game Session Queries
 ;; =============================================================================
 
-(begin-tx "Define utility functions")
+(begin-tx "Test game session queries")
 
-(print "Print balances for all test accounts:")
+;; Test getting player games
+(let ((alice-games (free.blackjack.get-player-games "alice")))
+  (expect "Alice should have multiple games" true (> (length alice-games) 0))
+  (print (format "Alice's games: {}" [alice-games])))
+
+;; Test getting active games
+(let ((active-games (free.blackjack.get-active-games)))
+  (print (format "Active games: {}" [active-games])))
+
+;; Test getting completed games
+(let ((completed-games (free.blackjack.get-completed-games)))
+  (expect "Should have completed games" true (> (length completed-games) 0))
+  (print (format "Completed games: {}" [completed-games])))
+
+(commit-tx)
+
+;; =============================================================================
+;; Final Status Check
+;; =============================================================================
+
+(begin-tx "Final status check")
+
+(print "=== FINAL BALANCES ===")
 (print (format "Alice balance: {}" [(coin.get-balance "alice")]))
 (print (format "Bob balance: {}" [(coin.get-balance "bob")]))
-(print (format "Charlie balance: {}" [(coin.get-balance "dave")]))
+(print (format "Dave balance: {}" [(coin.get-balance "dave")]))
 (print (format "Bank balance: {}" [(coin.get-balance (free.blackjack.get-BJ_BANK-account))]))
 
-
-(print "Print stats for all test accounts")
+(print "\n=== PLAYER STATS ===")
 (print (format "Alice stats: {}" [(free.blackjack.get-player-stats "alice")]))
 (print (format "Bob stats: {}" [(free.blackjack.get-player-stats "bob")]))
-(print (format "Charlie stats: {}" [(free.blackjack.get-player-stats "dave")]))
+(print (format "Dave stats: {}" [(free.blackjack.get-player-stats "dave")]))
 
-
-(print "Print tournament information")
+(print "\n=== TOURNAMENT INFO ===")
 (print (format "Tournament {}: {}" ["test-tournament-1" (free.blackjack.get-tournament "test-tournament-1")]))
 
+(print "\n=== ALL FEES ===")
+(print (format "All fees: {}" [(free.blackjack.get-all-fees)]))
+
+(print "\n=== GAME SUMMARY ===")
+(print (format "Total active games: {}" [(length (free.blackjack.get-active-games))]))
+(print (format "Total completed games: {}" [(length (free.blackjack.get-completed-games))]))
+
 (commit-tx)
-
-;; =============================================================================
-;; Additional Test Scenarios
-;; =============================================================================
-
-(begin-tx "Additional test scenarios")
-
-(commit-tx)
-
-(print "Blackjack REPL tests completed!")
