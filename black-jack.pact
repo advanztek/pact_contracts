@@ -77,7 +77,7 @@
     ; --------------------------------------------------------------------------
     ; Capabilities
     ; --------------------------------------------------------------------------
-    (defcap DEFAULT_ACCESS ()
+    (defcap PRIVATE ()
         true
     )
 
@@ -204,6 +204,7 @@
     ; --------------------------------------------------------------------------
     (defun store-account-guard (account:string guard:guard)
         @doc "Store account guard for future use"
+        (require-capability (PRIVATE))
         (write account-guards account { 'guard: guard })
     )
 
@@ -212,6 +213,7 @@
     ; --------------------------------------------------------------------------
     (defun join-pvc-game (account:string guard:guard)
       @doc "Join a PVC game by paying the required fee. Returns the game ID."
+      (with-capability (PRIVATE)
       (store-account-guard account guard)
       (with-capability (ACCOUNT_GUARD account)
         (let ((game-id (generate-game-id "pvc" account)))
@@ -222,7 +224,7 @@
           (insert game-sessions game-id {
             'game-id: game-id,
             'game-type: "pvc",
-            'players: [account],
+            'player: account,
             'status: "active",
             'winner: "",
             'tournament-id: "",
@@ -238,7 +240,7 @@
           ; Return the game ID
           game-id
         )
-      )
+      ))
     )
 
     (defun record-pvc-win (game-id:string winner:string)
@@ -280,6 +282,7 @@
     ; --------------------------------------------------------------------------
     (defun join-pvp-game (account:string guard:guard)
       @doc "Join or create a PVP game by paying the required fee. Returns the game ID."
+      (with-capability (PRIVATE)
       (store-account-guard account guard)
       (with-capability (ACCOUNT_GUARD account)
         (let ((game-id (generate-game-id "pvp" account)))
@@ -306,11 +309,12 @@
           ; Return the game ID
           game-id
         )
-      )
+      ))
     )
 
     (defun add-player-to-pvp-game (game-id:string account:string guard:guard)
         @doc "Add a second player to an existing PVP game."
+        (with-capability (PRIVATE)
         (store-account-guard account guard)
         ; Verify game exists and can accept another player
         (with-read game-sessions game-id
@@ -333,7 +337,7 @@
             (with-default-read player-table account { 'games-played: 0, 'wins: 0 }
                 {'games-played:=games-played, 'wins:=wins}
             (write player-table account { 'games-played: (+ 1 games-played), 'wins: wins }))
-        )
+        ))
     )
 
     (defun record-pvp-win (game-id:string winner:string)
@@ -375,6 +379,7 @@
     ; --------------------------------------------------------------------------
     (defun register-for-tournament (tournamentId:string account:string guard:guard)
       @doc "Pay to register for a tournament."
+      (with-capability (PRIVATE)
       (store-account-guard account guard)
       (with-capability (ACCOUNT_GUARD account)
         (with-read tournament-table tournamentId
@@ -394,7 +399,7 @@
                 })
             )
         )
-      )
+      ))
     )
 
     (defun join-tournament-game (account:string tournamentId:string)
@@ -499,7 +504,7 @@
 
     (defun get-player-stats (account:string)
         @doc "Returns the stats for a player."
-        (with-default-read player-table account 
+        (with-default-read with-read account 
             { 'games-played: 0, 'wins: 0 }
             { 'games-played:=gp, 'wins:=w }
             { 'games-played: gp, 'wins: w }
