@@ -1,4 +1,4 @@
-(enforce-pact-version "4.12")
+(enforce-pact-version "5.0")
 
 ;Init basic guard contract (needed to init namespaces)
 (begin-tx)
@@ -17,13 +17,8 @@
     "")
 
 ; Marmalade
-(if (not (try false (read-msg "disable-marmalade-v1")))
+(if (not (try false (read-msg "disable-marmalade")))
     (load "init-marmalade.repl")
-    "")
-
-; Marmalade
-(if (not (try false (read-msg "disable-marmalade-ng")))
-    (load "init-marmalade-ng.repl")
     "")
 
 ; Init test accounts

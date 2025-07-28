@@ -124,13 +124,49 @@
     ; Utility Functions
     ; --------------------------------------------------------------------------
     (defun generate-game-id (game-type:string account:string)
-        @doc "Generate a unique game ID based on game type, account, and current time"
-        (format "{}-{}-{}" [game-type account (curr-time)])
+        @doc "Generate a unique game ID using hash for better management"
+        (hash (format "{}-{}-{}" [game-type account (curr-time)]))
     )
 
     (defun curr-time:time ()
       @doc "Returns current chain's block-time"
       (at 'block-time (chain-data))
+    )
+
+    ; --------------------------------------------------------------------------
+    ; Events
+    ; --------------------------------------------------------------------------
+    (defun emit-game-created (game-id:string game-type:string player:string)
+        @doc "Emit event when game is created"
+        (emit-event (GAME_CREATED game-id game-type player))
+    )
+
+    (defun emit-game-joined (game-id:string player:string)
+        @doc "Emit event when player joins game"
+        (emit-event (GAME_JOINED game-id player))
+    )
+
+    (defun emit-game-completed (game-id:string winner:string)
+        @doc "Emit event when game is completed"
+        (emit-event (GAME_COMPLETED game-id winner))
+    )
+
+    (defcap GAME_CREATED (game-id:string game-type:string player:string)
+        @doc "Event emitted when a game is created"
+        @event
+        true
+    )
+
+    (defcap GAME_JOINED (game-id:string player:string)
+        @doc "Event emitted when a player joins a game"
+        @event
+        true
+    )
+
+    (defcap GAME_COMPLETED (game-id:string winner:string)
+        @doc "Event emitted when a game is completed"
+        @event
+        true
     )
 
     ; --------------------------------------------------------------------------
@@ -224,7 +260,7 @@
           (insert game-sessions game-id {
             'game-id: game-id,
             'game-type: "pvc",
-            'player: account,
+            'players: [account],
             'status: "active",
             'winner: "",
             'tournament-id: "",
@@ -236,6 +272,9 @@
           (with-default-read player-table account { 'games-played: 0, 'wins: 0 }
               {'games-played:=games-played, 'wins:=wins}
             (write player-table account { 'games-played: (+ 1 games-played), 'wins: wins }))
+          
+          ; Emit game created event
+          (emit-game-created game-id "pvc" account)
           
           ; Return the game ID
           game-id
@@ -266,13 +305,16 @@
             (update player-table winner { 'wins: (+ 1 wins) })
           )
 
-          ; Distribute PVC winnings
+          ; Distribute PVC winnings - Install capability within the contract
           (with-capability (BANK_TRANSFER)
             (let ((payout (* PVC_REWARD_PERC (get-pvc-fee))))
               (install-capability (coin.TRANSFER (get-BJ_BANK-account) winner payout))
               (coin.transfer (get-BJ_BANK-account) winner payout)
             )
           )
+
+          ; Emit game completed event
+          (emit-game-completed game-id winner)
         )
       )
     )
@@ -306,6 +348,9 @@
               {'games-played:=games-played, 'wins:=wins}
             (write player-table account { 'games-played: (+ 1 games-played), 'wins: wins }))
           
+          ; Emit game created event
+          (emit-game-created game-id "pvp" account)
+          
           ; Return the game ID
           game-id
         )
@@ -316,6 +361,7 @@
         @doc "Add a second player to an existing PVP game."
         (with-capability (PRIVATE)
         (store-account-guard account guard)
+        (with-capability (ACCOUNT_GUARD account)
         ; Verify game exists and can accept another player
         (with-read game-sessions game-id
             { 'game-type:=gt, 'players:=players, 'status:=status }
@@ -325,7 +371,6 @@
             (enforce (not (contains account players)) "Player already in this game")
 
             ; Deduct fee
-            (install-capability (coin.TRANSFER account (get-BJ_BANK-account) (get-pvp-fee)))
             (coin.transfer account (get-BJ_BANK-account) (get-pvp-fee))
 
             ; Add player to game
@@ -337,7 +382,10 @@
             (with-default-read player-table account { 'games-played: 0, 'wins: 0 }
                 {'games-played:=games-played, 'wins:=wins}
             (write player-table account { 'games-played: (+ 1 games-played), 'wins: wins }))
-        ))
+
+            ; Emit game joined event
+            (emit-game-joined game-id account)
+        )))
     )
 
     (defun record-pvp-win (game-id:string winner:string)
@@ -363,13 +411,16 @@
             (update player-table winner { 'wins: (+ 1 wins) })
           )
 
-          ; Distribute PVP winnings
-            (with-capability (BANK_TRANSFER)
-                (let ((payout (* PVP_REWARD_PERC (* 2.0 (get-pvp-fee)))))
-                    (install-capability (coin.TRANSFER (get-BJ_BANK-account) winner payout))
-                    (coin.transfer (get-BJ_BANK-account) winner payout)
-                )
+          ; Distribute PVP winnings - Install capability within the contract
+          (with-capability (BANK_TRANSFER)
+            (let ((payout (* PVP_REWARD_PERC (* 2.0 (get-pvp-fee)))))
+              (install-capability (coin.TRANSFER (get-BJ_BANK-account) winner payout))
+              (coin.transfer (get-BJ_BANK-account) winner payout)
             )
+          )
+
+          ; Emit game completed event
+          (emit-game-completed game-id winner)
         )
       )
     )
@@ -432,6 +483,9 @@
                 {'games-played:=games-played, 'wins:=wins}
               (write player-table account { 'games-played: (+ 1 games-played), 'wins: wins }))
             
+            ; Emit game created event
+            (emit-game-created game-id "tournament" account)
+            
             ; Return the game ID
             game-id
           )
@@ -462,7 +516,7 @@
             (update player-table winner { 'wins: (+ 1 wins) })
           )
 
-          ; Distribute tournament winnings
+          ; Distribute tournament winnings - Install capability within the contract
           (with-capability (BANK_TRANSFER)
             (with-read tournament-table tid { 'pool:=pool }
               (let ((payout (* TOURNAMENT_REWARD_PERC pool)))
@@ -471,6 +525,9 @@
               )
             )
           )
+
+          ; Emit game completed event
+          (emit-game-completed game-id winner)
         )
       )
     )
@@ -504,7 +561,7 @@
 
     (defun get-player-stats (account:string)
         @doc "Returns the stats for a player."
-        (with-default-read with-read account 
+        (with-default-read player-table account 
             { 'games-played: 0, 'wins: 0 }
             { 'games-played:=gp, 'wins:=w }
             { 'games-played: gp, 'wins: w }
