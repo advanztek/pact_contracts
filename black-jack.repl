@@ -53,6 +53,7 @@
 
 ;; Set admin signature for admin operations
 (env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE)]}])
+(env-sigs [{"key": "admin-key", "caps": [(free.blackjack.ADMIN)]}])
 
 ;; Check initial fees
 (expect "PVC fee should be 1.0" 1.0 (free.blackjack.get-pvc-fee))
@@ -90,8 +91,8 @@
   "sender": "test-sender"
 })
 
-;; Set admin signature for tournament creation
-(env-sigs [{"key": "admin-key", "caps": [(free.blackjack.GOVERNANCE)]}])
+;; Set admin signature for tournament creation (using ADMIN capability)
+(env-sigs [{"key": "admin-key", "caps": [(free.blackjack.ADMIN)]}])
 
 ;; Create a valid test tournament
 (free.blackjack.create-tournament 
@@ -380,7 +381,7 @@
 
 (begin-tx "Test error conditions")
 
-;; Test unauthorized admin action (should fail without admin keyset)
+;; Test unauthorized admin action (should fail without admin capability)
 (env-sigs [{"key": "alice-key", "caps": []}])
 (expect-failure "Should fail without admin capability"
   (free.blackjack.set-pvc-fee 10.0))
@@ -454,6 +455,5 @@
 (print "\n=== GAME SUMMARY ===")
 (print (format "Total active games: {}" [(length (free.blackjack.get-active-games))]))
 (print (format "Total completed games: {}" [(length (free.blackjack.get-completed-games))]))
-
 
 (commit-tx)

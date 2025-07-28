@@ -82,6 +82,12 @@
     )
 
     (defcap GOVERNANCE ()
+        @doc "Only for critical contract initialization and emergency upgrades"
+        (enforce-guard (keyset-ref-guard "free.blackjack-admin-keyset"))
+    )
+
+    (defcap ADMIN ()
+        @doc "For daily admin operations like fee adjustments and tournament creation"
         (enforce-guard (keyset-ref-guard "free.blackjack-admin-keyset"))
     )
 
@@ -190,7 +196,7 @@
     ; --------------------------------------------------------------------------
     (defun set-pvc-fee(price:decimal)
         @doc "Allows the admin to set PVC game mode fee."
-        (with-capability (GOVERNANCE)
+        (with-capability (ADMIN)
             (enforce (> price 0.0) "Price must be positive")
             (write pvc-fees-table "pvc" { 'fee: price })
         )
@@ -198,7 +204,7 @@
 
     (defun set-pvp-fee(price:decimal)
         @doc "Allows the admin to set PVP game mode fee."
-        (with-capability (GOVERNANCE)
+        (with-capability (ADMIN)
             (enforce (> price 0.0) "Price must be positive")
             (write pvp-fees-table "pvp" { 'fee: price })
         )
@@ -206,7 +212,7 @@
 
     (defun set-tournament-fee(price:decimal)
         @doc "Allows the admin to set tournament game mode fee."
-        (with-capability (GOVERNANCE)
+        (with-capability (ADMIN)
             (enforce (> price 0.0) "Price must be positive")
             (write tournament-fees-table "tournament" { 'fee: price })
         )
@@ -214,7 +220,7 @@
 
     (defun create-tournament (id:string pool:decimal maxPlayers:integer startSignup:time endSignup:time startDate:time endDate:time)
         @doc "Allows the admin to create a tournament."
-        (with-capability (GOVERNANCE)
+        (with-capability (ADMIN)
             (enforce (!= id "") "Tournament ID cannot be empty")
             (enforce (> pool 0.0) "Pool must be positive")
             (enforce (> maxPlayers 0) "Max players must be positive")
