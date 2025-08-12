@@ -244,10 +244,22 @@
     ; --------------------------------------------------------------------------
     ; Guard Management
     ; --------------------------------------------------------------------------
-    (defun store-account-guard (account:string guard:guard)
-        @doc "Store account guard for future use"
-        (require-capability (PRIVATE))
-        (write account-guards account { 'guard: guard })
+    (defun store-account-guard (account:string new-guard:guard)
+      @doc "Store account guard for future use - validates current guard first"
+      (require-capability (PRIVATE))
+      
+      (with-default-read account-guards account
+          { 'guard: new-guard }  ;; 
+          { 'guard := current-guard }
+          
+          (if (!= current-guard new-guard)
+              (enforce-guard current-guard)
+              true
+          )
+          
+          (write account-guards account { 'guard: new-guard })
+          (format "Guard stored successfully for account: {}" [account])
+      )
     )
 
     ; --------------------------------------------------------------------------
